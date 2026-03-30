@@ -1,0 +1,2037 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>我的生存日记</title>
+<link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --paper:#fdf8f0;--ink:#3d2b1f;--line:#e8d5c0;
+  --font:'ZCOOL KuaiLe',cursive;
+}
+html,body{
+  width:100%;height:100%;overflow:hidden;
+  background:#7a5c1e;
+  background-image:
+    radial-gradient(ellipse at 25% 80%,#5a3e10 0%,transparent 55%),
+    radial-gradient(ellipse at 75% 20%,#9a7020 0%,transparent 55%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Ccircle cx='1' cy='1' r='.45' fill='rgba(0,0,0,0.07)'/%3E%3C/svg%3E");
+  font-family:var(--font);color:var(--ink);user-select:none;
+}
+
+/* ── 场景容器 ── */
+#scene{
+  position:fixed;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  perspective:2400px;perspective-origin:50% 46%;
+}
+
+/* ── 书本整体容器 ── */
+#book-wrap{
+  position:relative;
+  /* 合上时：单页宽度 */
+  width:min(460px,52vw);
+  height:min(640px,90vh);
+  transform-style:preserve-3d;
+  transform:rotateX(10deg);
+  transition:width 0.8s cubic-bezier(.4,0,.2,1),
+             transform 1s cubic-bezier(.4,0,.2,1),
+             filter 0.8s ease;
+  filter:drop-shadow(0 36px 90px rgba(0,0,0,0.6));
+}
+#book-wrap.opened{
+  /* 翻开时：双页宽度 */
+  width:min(920px,96vw);
+  transform:rotateX(5deg);
+}
+
+/* 书底阴影 */
+#book-wrap::after{
+  content:'';
+  position:absolute;
+  bottom:-32px;left:6%;right:6%;height:32px;
+  background:radial-gradient(ellipse at 50% 0%,rgba(0,0,0,0.4) 0%,transparent 70%);
+  filter:blur(6px);
+  pointer-events:none;
+}
+
+/* ── 书脊 ── */
+#spine{
+  position:absolute;
+  left:50%;top:0;bottom:0;width:18px;
+  transform:translateX(-50%);
+  background:linear-gradient(90deg,#4a2e08 0%,#c8a97a 25%,#f0d090 50%,#c8a97a 75%,#4a2e08 100%);
+  z-index:20;
+  box-shadow:0 0 20px rgba(0,0,0,0.45);
+  opacity:0;
+  transition:opacity .3s ease .5s;
+}
+#book-wrap.opened #spine{opacity:1;}
+
+/* ── 左页（地图）── */
+#left-page{
+  position:absolute;left:0;top:0;bottom:0;
+  width:calc(50% - 9px);
+  background:var(--paper);
+  border-radius:6px 0 0 6px;
+  overflow:hidden;
+  box-shadow:inset -10px 0 28px rgba(0,0,0,0.14),0 4px 0 rgba(0,0,0,0.06);
+  /* 合上时不可见 */
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .4s ease .6s;
+}
+#book-wrap.opened #left-page{
+  opacity:1;
+  pointer-events:all;
+}
+
+/* 左页内地图舞台 */
+#stage{
+  position:absolute;inset:0;
+  overflow:hidden;
+  cursor:grab;
+  /* 无限海洋：水彩波纹 SVG 平铺 */
+  background-color:#c8e8f6;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='80'%3E%3Cellipse cx='60' cy='40' rx='55' ry='32' fill='none' stroke='%23a8d4ee' stroke-width='1.2' opacity='0.4'/%3E%3Cellipse cx='20' cy='15' rx='18' ry='10' fill='%23b8dcf4' opacity='0.18'/%3E%3Cellipse cx='100' cy='65' rx='16' ry='9' fill='%23b0d8f0' opacity='0.15'/%3E%3Cpath d='M10 40 Q30 34 50 40 Q70 46 90 40 Q110 34 118 38' stroke='%2390c4e4' stroke-width='1' fill='none' opacity='0.25'/%3E%3Cpath d='M5 55 Q25 50 45 55 Q65 60 85 55 Q100 51 115 54' stroke='%2398cce8' stroke-width='0.8' fill='none' opacity='0.2'/%3E%3C/svg%3E");
+  background-size:120px 80px;
+}
+#stage:active{cursor:grabbing;}
+
+/* 可缩放平移的地图画布：初始居中 */
+#map-canvas{
+  position:absolute;
+  /* 画布尺寸与SVG viewBox对齐：800×600，用px定义以便居中 */
+  width:800px;height:600px;
+  top:50%;left:50%;
+  margin-left:-400px;margin-top:-300px;
+  transform-origin:center center;
+  will-change:transform;
+  overflow:visible; /* 允许SVG内容溢出，实现无限延伸效果 */
+}
+#world-svg{
+  position:absolute;top:0;left:0;
+  width:800px;height:600px;
+  display:block;
+  overflow:visible; /* 大陆可延伸到SVG边界外 */
+}
+#nodes-container{
+  position:absolute;top:0;left:0;width:800px;height:600px;
+  z-index:10;pointer-events:none;
+}
+#nodes-container .node{pointer-events:all}
+
+/* 缩放提示 */
+#zoom-hint{
+  position:absolute;bottom:48px;right:8px;z-index:60;
+  display:flex;flex-direction:column;gap:4px;
+}
+.zoom-btn{
+  width:26px;height:26px;
+  background:rgba(255,255,255,0.92);
+  border:1px solid rgba(200,169,122,0.4);
+  border-radius:7px;cursor:pointer;
+  font-size:16px;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px rgba(0,0,0,0.12);
+  color:#5c3d2e;transition:background .15s;
+}
+.zoom-btn:hover{background:#fff;}
+#zoom-level{
+  width:26px;height:20px;
+  background:rgba(255,255,255,0.85);
+  border-radius:5px;
+  font-size:9px;color:#a07850;
+  display:flex;align-items:center;justify-content:center;
+  letter-spacing:0;
+}
+
+/* ── 右页（内容/日记）── */
+#right-page{
+  position:absolute;right:0;top:0;bottom:0;
+  width:calc(50% - 9px);
+  border-radius:0 6px 6px 0;
+  overflow:hidden;
+  transform-origin:left center;
+  transform-style:preserve-3d;
+  transition:transform .75s cubic-bezier(.4,0,.2,1),opacity .3s ease;
+  box-shadow:inset 10px 0 28px rgba(0,0,0,0.1),4px 0 0 rgba(0,0,0,0.06);
+  /* 合上时隐藏 */
+  opacity:0;
+  pointer-events:none;
+}
+#book-wrap.opened #right-page{
+  opacity:1;
+  pointer-events:all;
+}
+/* 日记翻页状态 */
+#right-page.flip-out{transform:rotateY(90deg);}
+#right-page.flip-in{transform:rotateY(-90deg);}
+
+/* 右页正面：等待翻开提示 */
+#rp-idle{
+  position:absolute;inset:0;
+  background:var(--paper);
+  background-image:repeating-linear-gradient(transparent,transparent 27px,var(--line) 27px,var(--line) 28px);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  z-index:2;
+  opacity:0;
+  transition:opacity .5s ease;
+}
+#rp-idle .idle-icon{
+  font-size:36px;
+  animation:float-y 3s ease-in-out infinite;
+}
+@keyframes float-y{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+#rp-idle .idle-text{
+  font-size:13px;color:#c8a97a;letter-spacing:3px;
+  text-align:center;line-height:2;
+}
+#book-wrap.opened #rp-idle{opacity:1;transition-delay:.7s;}
+#rp-idle.hidden{display:none;}
+
+/* 右页日记内容 */
+#rp-diary{
+  position:absolute;inset:0;
+  background:var(--paper);
+  background-image:repeating-linear-gradient(transparent,transparent 27px,var(--line) 27px,var(--line) 28px);
+  padding:22px 18px 18px;
+  overflow:hidden;
+  display:none;
+  flex-direction:column;
+  gap:10px;
+}
+#rp-diary.show{display:flex;}
+
+/* ── 封面 ── */
+#cover{
+  position:absolute;
+  left:0;top:0;bottom:0;
+  /* 合上时占满整本书（单页宽） */
+  width:100%;
+  transform-origin:left center;
+  transform-style:preserve-3d;
+  transition:transform 1.2s cubic-bezier(.55,0,.1,1),
+             width 0s linear 1.2s; /* 翻完后再收窄，避免动画中遮挡 */
+  z-index:15;
+  cursor:pointer;
+}
+#cover.opened{
+  transform:rotateY(-180deg);
+  pointer-events:none;
+  cursor:default;
+  /* 翻开后只占左半边，不遮挡右页 */
+  width:calc(50% - 9px);
+  transition:transform 1.2s cubic-bezier(.55,0,.1,1),
+             width 0s linear 0s;
+}
+
+/* 封面正面 */
+#cover-front{
+  position:absolute;inset:0;
+  backface-visibility:hidden;
+  -webkit-backface-visibility:hidden;
+  border-radius:6px;
+  background:linear-gradient(158deg,#5c8a5c 0%,#3d6b47 30%,#2d5238 65%,#1e3d2a 100%);
+  box-shadow:inset -10px 0 30px rgba(0,0,0,0.32),inset 3px 0 8px rgba(255,255,255,0.05);
+  overflow:hidden;
+  display:flex;flex-direction:column;align-items:center;
+}
+/* 左侧书脊深色条 */
+#cover-front::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:24px;
+  background:linear-gradient(90deg,#111e14,#2d5238 70%,#3d6b47);
+  box-shadow:2px 0 10px rgba(0,0,0,0.25);
+}
+/* 纸质微纹理 */
+#cover-front::after{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4'%3E%3Ccircle cx='1' cy='1' r='.38' fill='rgba(255,255,255,0.03)'/%3E%3C/svg%3E");
+}
+/* 封面装饰边框 */
+.cv-bd{
+  position:absolute;top:18px;left:30px;right:15px;bottom:18px;
+  border:1.5px solid rgba(255,255,255,0.15);border-radius:3px;pointer-events:none;
+}
+.cv-bd2{
+  position:absolute;top:24px;left:36px;right:21px;bottom:24px;
+  border:1px solid rgba(255,255,255,0.07);border-radius:2px;pointer-events:none;
+}
+/* 书名 */
+.cv-title-wrap{
+  margin-top:52px;text-align:center;
+  padding:0 32px;position:relative;z-index:1;
+}
+.cv-title{
+  font-size:clamp(20px,3.2vw,28px);color:#fef9ec;
+  letter-spacing:6px;text-shadow:0 2px 14px rgba(0,0,0,0.4);line-height:1.4;
+}
+.cv-title span{
+  display:block;font-size:clamp(10px,1.4vw,12px);
+  letter-spacing:8px;color:rgba(255,249,236,0.5);margin-top:8px;
+}
+.cv-divider{
+  width:56px;height:1.5px;margin:16px auto;
+  background:linear-gradient(90deg,transparent,rgba(255,249,236,0.4),transparent);
+}
+.cv-year{font-size:11px;color:rgba(255,249,236,0.35);letter-spacing:3px;}
+/* 卡通人物 */
+.cv-char{
+  flex:1;display:flex;align-items:flex-end;justify-content:center;
+  position:relative;z-index:1;padding-bottom:6px;overflow:hidden;
+}
+/* 封面底部 */
+.cv-bottom{
+  padding:10px 30px 22px;text-align:center;
+  position:relative;z-index:1;width:100%;
+}
+.cv-hint{
+  font-size:13px;color:rgba(255,249,236,0.78);letter-spacing:2px;
+  animation:hint-pulse 2.2s ease-in-out infinite;
+}
+@keyframes hint-pulse{
+  0%,100%{opacity:.78;transform:translateY(0)}
+  50%{opacity:.3;transform:translateY(-3px)}
+}
+
+/* 封面背面（内衬）- 翻开后隐藏，左页地图显示 */
+#cover-back{
+  position:absolute;inset:0;
+  backface-visibility:hidden;
+  -webkit-backface-visibility:hidden;
+  transform:rotateY(180deg);
+  border-radius:6px;
+  background:#fdf5e6;
+  display:none; /* 不需要封面背面内衬，直接隐藏 */
+}
+
+
+
+/* ──────────────────────────────────────────
+   地图 UI（绝对定位在 #stage 内）
+────────────────────────────────────────── */
+#legend{
+  position:absolute;top:10px;right:8px;z-index:50;
+  background:rgba(255,255,255,0.9);backdrop-filter:blur(8px);
+  border-radius:10px;padding:7px 12px;
+  display:flex;flex-direction:column;gap:5px;
+  border:1px solid rgba(255,255,255,0.55);
+  box-shadow:0 3px 12px rgba(0,0,0,0.1);
+}
+.leg-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink)}
+.leg-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+#site-title{
+  position:absolute;top:8px;left:8px;z-index:50;
+  background:rgba(255,255,255,0.9);backdrop-filter:blur(8px);
+  border-radius:10px;padding:6px 12px;
+  border:1px solid rgba(255,255,255,0.55);
+  box-shadow:0 3px 12px rgba(0,0,0,0.1);
+}
+#site-title h1{font-size:14px;color:var(--ink);letter-spacing:2px}
+#site-title p{font-size:10px;color:#a07850;margin-top:1px}
+
+/* 底部想法条 */
+#bar{
+  position:absolute;bottom:0;left:0;right:0;height:40px;
+  background:rgba(255,255,255,0.9);backdrop-filter:blur(8px);
+  border-top:2px dashed #fcd34d;
+  display:flex;align-items:center;overflow:hidden;cursor:pointer;z-index:50;
+}
+#bar:hover #scroll-wrap{animation-play-state:paused}
+#scroll-wrap{
+  display:flex;align-items:center;white-space:nowrap;
+  animation:marquee 30s linear infinite;
+  font-size:13px;color:#92400e;gap:60px;padding-left:100%;
+}
+@keyframes marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.thought-item::before{content:'✦  ';color:#f97316}
+
+#thought-panel{
+  position:absolute;bottom:40px;left:0;right:0;max-height:0;overflow:hidden;
+  transition:max-height .4s cubic-bezier(.4,0,.2,1);
+  background:rgba(255,255,255,0.97);backdrop-filter:blur(12px);
+  border-top:2px solid #fde68a;z-index:49;
+}
+#thought-panel.open{max-height:240px;}
+.t-list{padding:14px 22px;max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;}
+.t-entry{display:flex;gap:12px;align-items:flex-start}
+.t-d{font-size:11px;color:#a16207;min-width:80px;padding-top:3px}
+.t-t{font-size:13px;color:#3d2b1f;line-height:1.7;padding-left:12px;position:relative}
+.t-t::before{content:'';position:absolute;left:0;top:7px;width:6px;height:6px;border-radius:50%;background:#f97316}
+
+/* ──────────────────────────────────────────
+   右页日记内容样式
+────────────────────────────────────────── */
+.pg-date{font-size:12px;color:#a07850;letter-spacing:1px;flex-shrink:0}
+.collage{display:grid;gap:4px;border-radius:5px;overflow:hidden;height:160px;flex-shrink:0}
+.collage.c1{grid-template-columns:1fr}
+.collage.c2{grid-template-columns:1fr 1fr}
+.collage.c3{grid-template-columns:2fr 1fr;grid-template-rows:1fr 1fr}
+.collage.c3 .ph:first-child{grid-row:1/3}
+.ph{
+  background:#e8d5c0;display:flex;align-items:center;justify-content:center;
+  font-size:26px;color:#c4a882;overflow:hidden;border-radius:3px;
+}
+.ph img{width:100%;height:100%;object-fit:cover}
+.pg-desc{font-size:12px;line-height:1.9;color:#5c3d2e;overflow:hidden;flex:1}
+.pg-loc{font-size:11px;color:#a07850;display:flex;align-items:center;gap:4px;
+  background:rgba(255,255,255,0.7);padding:2px 8px;border-radius:16px;
+  border:1px solid var(--line);align-self:flex-start;flex-shrink:0}
+.pg-weather{font-size:12px;color:#a07850;text-align:right;flex-shrink:0}
+.pg-cards-title{font-size:11px;color:#a07850;letter-spacing:1px;flex-shrink:0}
+.pg-cards{display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1}
+.card{display:flex;gap:8px;background:rgba(255,255,255,0.6);border-radius:7px;
+  padding:8px;border:1px solid var(--line)}
+.card-cover{width:40px;height:54px;background:#e0d0bc;border-radius:3px;overflow:hidden;
+  flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;color:#c4a882}
+.card-cover img{width:100%;height:100%;object-fit:cover}
+.card-info{flex:1;min-width:0}
+.card-type{font-size:9px;color:#a07850;background:rgba(160,120,80,0.12);
+  padding:1px 5px;border-radius:8px;display:inline-block;margin-bottom:3px}
+.card-title{font-size:12px;font-weight:700;margin-bottom:2px;color:var(--ink)}
+.card-review{font-size:11px;color:#5c3d2e;line-height:1.6}
+.pg-sign{font-size:12px;color:#c4a882;font-style:italic;letter-spacing:1px;
+  text-align:right;flex-shrink:0;margin-top:auto}
+
+/* 私密遮罩 */
+.private-mask{
+  position:absolute;inset:0;background:var(--paper);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:12px;font-size:13px;color:#a07850;z-index:5;
+}
+.private-mask .lock-icon{font-size:36px}
+
+/* 翻页控制 */
+#page-nav{
+  position:absolute;bottom:10px;left:0;right:0;
+  display:flex;align-items:center;justify-content:center;gap:16px;
+  z-index:30;
+  opacity:0;pointer-events:none;transition:opacity .3s ease;
+}
+#page-nav.show{opacity:1;pointer-events:all;}
+.nav-btn{
+  width:34px;height:34px;background:rgba(255,255,255,0.92);
+  border:1.5px solid var(--line);border-radius:50%;cursor:pointer;
+  font-size:18px;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 10px rgba(0,0,0,0.12);transition:all .2s;color:var(--ink);
+  line-height:1;
+}
+.nav-btn:hover{background:#fff;transform:scale(1.1);}
+.nav-btn:disabled{opacity:0.3;cursor:default;transform:none;}
+#pg-counter{font-size:11px;color:#a07850;min-width:48px;text-align:center}
+
+/* 关闭日记按钮 */
+#close-diary{
+  position:absolute;top:8px;right:10px;
+  width:28px;height:28px;background:rgba(255,255,255,0.9);
+  border:1.5px solid var(--line);border-radius:50%;cursor:pointer;
+  font-size:14px;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px rgba(0,0,0,0.1);z-index:30;transition:transform .2s;
+  display:none;
+}
+#close-diary.show{display:flex;}
+#close-diary:hover{transform:scale(1.1) rotate(90deg);}
+
+/* ──────────────────────────────────────────
+   光点节点
+────────────────────────────────────────── */
+.node{position:absolute;transform:translate(-50%,-50%);cursor:pointer;z-index:10}
+.dot{
+  width:13px;height:13px;border-radius:50%;
+  border:2.5px solid rgba(255,255,255,0.92);
+  box-shadow:0 2px 7px rgba(0,0,0,0.22);
+  animation:breathe 2.8s ease-in-out infinite;
+  transition:transform .2s;
+}
+.node:hover .dot{
+  transform:scale(1.6);animation:none;
+  box-shadow:0 0 0 5px rgba(255,255,255,0.28),0 3px 12px rgba(0,0,0,0.25);
+}
+@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}
+.type-travel .dot{background:#f97316}
+.type-book   .dot{background:#8b5cf6}
+.type-film   .dot{background:#ec4899}
+.type-life   .dot{background:#10b981}
+.type-food   .dot{background:#f59e0b}
+
+.tip{
+  position:absolute;bottom:calc(100% + 12px);left:50%;
+  transform:translateX(-50%) scale(0.85);
+  background:#fff;border-radius:9px;padding:5px 11px;
+  white-space:nowrap;font-size:11px;line-height:1.6;
+  box-shadow:0 4px 14px rgba(0,0,0,0.13);pointer-events:none;
+  opacity:0;transition:opacity .18s,transform .18s;z-index:60;
+}
+.tip::after{
+  content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);
+  border:6px solid transparent;border-top-color:#fff;
+}
+.node:hover .tip{opacity:1;transform:translateX(-50%) scale(1)}
+.type-travel .tip{border:2px solid #f97316;color:#f97316}
+.type-book   .tip{border:2px solid #8b5cf6;color:#8b5cf6}
+.type-film   .tip{border:2px solid #ec4899;color:#ec4899}
+.type-life   .tip{border:2px solid #10b981;color:#10b981}
+.type-food   .tip{border:2px solid #f59e0b;color:#f59e0b}
+.tip-name{font-weight:700;font-size:12px;display:block}
+.tip-date{font-size:10px;opacity:.6;display:block}
+
+/* ── 编辑模式按钮 ── */
+#edit-mode-btn{
+  position:absolute;bottom:48px;left:8px;z-index:60;
+  width:64px;height:26px;
+  background:rgba(255,255,255,0.92);
+  border:1px solid rgba(200,169,122,0.4);
+  border-radius:7px;cursor:pointer;
+  font-size:10px;line-height:1;
+  display:flex;align-items:center;justify-content:center;gap:3px;
+  box-shadow:0 2px 8px rgba(0,0,0,0.12);
+  color:#5c3d2e;transition:background .15s,border-color .15s;
+  white-space:nowrap;
+}
+#edit-mode-btn:hover{background:#fff;}
+#edit-mode-btn.active{
+  background:#f97316;color:#fff;
+  border-color:#f97316;
+}
+#edit-hint{
+  position:absolute;bottom:48px;left:80px;z-index:60;
+  background:rgba(249,115,22,0.9);color:#fff;
+  border-radius:7px;padding:4px 10px;
+  font-size:10px;white-space:nowrap;
+  pointer-events:none;opacity:0;
+  transition:opacity .2s;
+}
+#edit-hint.show{opacity:1;}
+
+/* ── 右键菜单 ── */
+#ctx-menu{
+  position:fixed;z-index:9999;
+  background:#fff;border-radius:10px;
+  box-shadow:0 8px 32px rgba(0,0,0,0.18);
+  border:1px solid rgba(0,0,0,0.07);
+  min-width:120px;overflow:hidden;
+  display:none;
+}
+#ctx-menu.show{display:block;}
+.ctx-item{
+  padding:9px 16px;font-size:12px;
+  color:#3d2b1f;cursor:pointer;
+  display:flex;align-items:center;gap:8px;
+  transition:background .12s;
+  font-family:var(--font);
+}
+.ctx-item:hover{background:#fef3e2;}
+.ctx-item.danger{color:#e53e3e;}
+.ctx-item.danger:hover{background:#fff5f5;}
+.ctx-sep{height:1px;background:#f0e8dc;margin:2px 0;}
+
+/* ── 编辑弹窗遮罩 ── */
+#modal-overlay{
+  position:fixed;inset:0;z-index:10000;
+  background:rgba(0,0,0,0.45);
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;pointer-events:none;
+  transition:opacity .22s;
+}
+#modal-overlay.show{opacity:1;pointer-events:all;}
+
+/* ── 编辑弹窗 ── */
+#modal-box{
+  background:#fdf8f0;border-radius:16px;
+  width:min(420px,92vw);max-height:88vh;
+  overflow-y:auto;
+  box-shadow:0 20px 60px rgba(0,0,0,0.35);
+  transform:translateY(18px) scale(0.97);
+  transition:transform .22s cubic-bezier(.4,0,.2,1);
+  padding:0;
+}
+#modal-overlay.show #modal-box{
+  transform:translateY(0) scale(1);
+}
+.modal-header{
+  padding:18px 20px 12px;
+  border-bottom:1px solid #f0e8dc;
+  display:flex;align-items:center;justify-content:space-between;
+}
+.modal-title{font-size:15px;color:#3d2b1f;letter-spacing:1px;}
+.modal-close{
+  width:28px;height:28px;border-radius:50%;
+  background:rgba(0,0,0,0.06);border:none;cursor:pointer;
+  font-size:14px;display:flex;align-items:center;justify-content:center;
+  transition:background .15s,transform .15s;
+}
+.modal-close:hover{background:rgba(0,0,0,0.12);transform:rotate(90deg);}
+.modal-body{padding:16px 20px;}
+.form-row{margin-bottom:13px;}
+.form-label{
+  display:block;font-size:11px;color:#a07850;
+  margin-bottom:5px;letter-spacing:0.5px;
+}
+.form-input,.form-select,.form-textarea{
+  width:100%;padding:7px 11px;
+  background:#fff;border:1.5px solid #e8d5c0;
+  border-radius:8px;font-size:12px;color:#3d2b1f;
+  font-family:var(--font);outline:none;
+  transition:border-color .15s;box-sizing:border-box;
+}
+.form-input:focus,.form-select:focus,.form-textarea:focus{
+  border-color:#f97316;
+}
+.form-textarea{resize:vertical;min-height:68px;line-height:1.7;}
+.form-row-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:13px;}
+.type-btns{display:flex;flex-wrap:wrap;gap:6px;}
+.type-btn{
+  padding:5px 12px;border-radius:16px;
+  border:1.5px solid #e8d5c0;background:#fff;
+  font-size:11px;color:#5c3d2e;cursor:pointer;
+  font-family:var(--font);transition:all .15s;
+}
+.type-btn.sel{background:#f97316;border-color:#f97316;color:#fff;}
+.pos-preview{
+  font-size:11px;color:#a07850;
+  background:#fef3e2;border-radius:6px;
+  padding:5px 10px;margin-top:4px;
+  display:inline-block;
+}
+.modal-footer{
+  padding:12px 20px 18px;
+  display:flex;gap:10px;justify-content:flex-end;
+}
+.btn-cancel{
+  padding:8px 20px;border-radius:20px;
+  border:1.5px solid #e8d5c0;background:#fff;
+  font-size:12px;color:#5c3d2e;cursor:pointer;
+  font-family:var(--font);transition:background .15s;
+}
+.btn-cancel:hover{background:#f5eee4;}
+.btn-save{
+  padding:8px 24px;border-radius:20px;
+  border:none;background:#f97316;
+  font-size:12px;color:#fff;cursor:pointer;
+  font-family:var(--font);transition:background .15s;
+  box-shadow:0 2px 10px rgba(249,115,22,0.3);
+}
+.btn-save:hover{background:#e86608;}
+
+/* 小巴士 */
+#bus{
+  position:absolute;z-index:15;pointer-events:none;
+  width:50px;height:32px;
+  filter:drop-shadow(0 3px 7px rgba(0,0,0,0.2));
+}
+#bus-inner{width:100%;height:100%}
+#bus.moving #bus-inner{animation:bumpy .38s ease-in-out infinite}
+@keyframes bumpy{0%,100%{transform:translateY(0)}40%{transform:translateY(-2px)}75%{transform:translateY(1.5px)}}
+
+/* ──────────────────────────────────────────
+   翻页纸张动画
+────────────────────────────────────────── */
+#page-turn-anim{
+  position:absolute;inset:0;z-index:40;
+  pointer-events:none;display:none;
+}
+#page-turn-anim.active{display:block;}
+.turn-sheet{
+  position:absolute;inset:0;
+  background:var(--paper);
+  background-image:repeating-linear-gradient(
+    transparent,transparent 27px,var(--line) 27px,var(--line) 28px
+  );
+  border-radius:0 6px 6px 0;
+  transform-origin:left center;
+  transform:rotateY(0deg);
+  animation:turn-page .7s cubic-bezier(.4,0,.2,1) forwards;
+  box-shadow:inset 10px 0 28px rgba(0,0,0,0.1);
+}
+@keyframes turn-page{
+  0%  {transform:rotateY(0deg);    box-shadow:inset 10px 0 28px rgba(0,0,0,0.1),8px 0 20px rgba(0,0,0,0.2);}
+  50% {transform:rotateY(-90deg);  box-shadow:0 0 30px rgba(0,0,0,0.25);}
+  100%{transform:rotateY(-180deg); box-shadow:none; opacity:0;}
+}
+.turn-sheet-back{
+  position:absolute;inset:0;
+  background:var(--paper);
+  background-image:repeating-linear-gradient(
+    transparent,transparent 27px,var(--line) 27px,var(--line) 28px
+  );
+  border-radius:0 6px 6px 0;
+  transform-origin:left center;
+  transform:rotateY(180deg);
+  animation:turn-page-in .7s cubic-bezier(.4,0,.2,1) forwards;
+  backface-visibility:hidden;
+}
+@keyframes turn-page-in{
+  0%  {transform:rotateY(180deg); opacity:0;}
+  50% {transform:rotateY(90deg);  opacity:1;}
+  100%{transform:rotateY(0deg);   opacity:1;}
+}
+
+/* ──────────────────────────────────────────
+   合上书按钮（内页时右上角显示）
+────────────────────────────────────────── */
+#close-book-btn{
+  position:absolute;
+  top:-14px;left:50%;transform:translateX(-50%);
+  z-index:100;
+  background:rgba(93,62,20,0.92);
+  color:#fef9ec;
+  border:none;border-radius:20px;
+  padding:5px 18px;
+  font-size:12px;font-family:var(--font);
+  letter-spacing:2px;cursor:pointer;
+  box-shadow:0 3px 14px rgba(0,0,0,0.35);
+  opacity:0;pointer-events:none;
+  transition:opacity .3s ease .6s;
+  white-space:nowrap;
+}
+#book-wrap.opened #close-book-btn{
+  opacity:1;pointer-events:all;
+}
+#close-book-btn:hover{background:rgba(120,80,25,0.96);}
+
+/* ──────────────────────────────────────────
+   响应式
+────────────────────────────────────────── */
+@media(max-width:640px){
+  #book-wrap{height:min(560px,92vh);}
+  #book-wrap.opened{width:min(640px,98vw);}
+  #legend{top:auto;bottom:48px;right:6px;padding:5px 9px;}
+  #site-title{top:6px;left:6px;padding:5px 10px;}
+  #site-title h1{font-size:12px}
+  .pg-desc{font-size:11px}
+}
+</style>
+</head>
+<body>
+
+<div id="scene">
+  <div id="book-wrap">
+
+    <!-- 合上书按钮（内页时显示在书顶部中央） -->
+    <button id="close-book-btn" onclick="closeBook()">✕ 合上书</button>
+
+    <!-- 书脊 -->
+    <div id="spine"></div>
+
+
+    <!-- ===== 左页：地图 ===== -->
+    <div id="left-page">
+      <div id="stage">
+
+        <!-- 可缩放平移的地图画布 -->
+        <div id="map-canvas">
+
+        <!-- 水彩插画SVG地图 -->
+        <svg id="world-svg" viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <!-- 水彩晕染滤镜 -->
+            <filter id="wc-blur" x="-15%" y="-15%" width="130%" height="130%">
+              <feGaussianBlur stdDeviation="6" result="blur"/>
+              <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+            </filter>
+            <!-- 柔边晕染（用于色块边缘） -->
+            <filter id="wc-soft" x="-8%" y="-8%" width="116%" height="116%">
+              <feGaussianBlur stdDeviation="4"/>
+            </filter>
+            <!-- 纸张纹理 -->
+            <filter id="paper-tex" x="0" y="0" width="100%" height="100%">
+              <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" result="noise"/>
+              <feColorMatrix type="saturate" values="0" in="noise" result="gray"/>
+              <feBlend in="SourceGraphic" in2="gray" mode="multiply" result="blend"/>
+              <feComponentTransfer in="blend">
+                <feFuncA type="linear" slope="1"/>
+              </feComponentTransfer>
+            </filter>
+            <!-- 轻微扭曲（模拟手绘） -->
+            <filter id="sketch" x="-3%" y="-3%" width="106%" height="106%">
+              <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="2" result="noise"/>
+              <feDisplacementMap in="SourceGraphic" in2="noise" scale="3" xChannelSelector="R" yChannelSelector="G"/>
+            </filter>
+
+            <!-- 渐变：深海 -->
+            <radialGradient id="ocean-g" cx="50%" cy="50%" r="70%">
+              <stop offset="0%" stop-color="#c8e8f8"/>
+              <stop offset="100%" stop-color="#a8d4ee"/>
+            </radialGradient>
+            <!-- 渐变：主大陆 -->
+            <radialGradient id="land-g" cx="45%" cy="40%" r="65%">
+              <stop offset="0%" stop-color="#c8eac0"/>
+              <stop offset="60%" stop-color="#a8d898"/>
+              <stop offset="100%" stop-color="#88c478"/>
+            </radialGradient>
+            <!-- 渐变：山地 -->
+            <linearGradient id="hill-g" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#d4c8f0"/>
+              <stop offset="100%" stop-color="#b8a8e0"/>
+            </linearGradient>
+            <!-- 渐变：湖泊 -->
+            <radialGradient id="lake-g" cx="40%" cy="35%" r="60%">
+              <stop offset="0%" stop-color="#9ed8f8"/>
+              <stop offset="100%" stop-color="#60b8e8"/>
+            </radialGradient>
+            <!-- 渐变：沙漠 -->
+            <radialGradient id="desert-g" cx="50%" cy="40%" r="60%">
+              <stop offset="0%" stop-color="#fdeaa0"/>
+              <stop offset="100%" stop-color="#f8d068"/>
+            </radialGradient>
+            <!-- 渐变：小岛绿 -->
+            <radialGradient id="isle-g" cx="40%" cy="35%" r="65%">
+              <stop offset="0%" stop-color="#b8f0c8"/>
+              <stop offset="100%" stop-color="#78d898"/>
+            </radialGradient>
+            <!-- 渐变：小岛黄 -->
+            <radialGradient id="isle2-g" cx="40%" cy="35%" r="65%">
+              <stop offset="0%" stop-color="#fef4a0"/>
+              <stop offset="100%" stop-color="#f8dc68"/>
+            </radialGradient>
+          </defs>
+
+          <!-- ① 海洋深色晕染（叠在stage背景上，增加深浅层次） -->
+          <ellipse cx="400" cy="300" rx="500" ry="380" fill="#b8ddf0" opacity="0.22"/>
+
+          <!-- ② 远洋岛礁暗示（让无限海洋有层次感） -->
+          <ellipse cx="-80" cy="180" rx="55" ry="38" fill="#b0d8ea" opacity="0.18" filter="url(#wc-soft)"/>
+          <ellipse cx="900" cy="480" rx="65" ry="40" fill="#a8d2e8" opacity="0.15" filter="url(#wc-soft)"/>
+          <ellipse cx="350" cy="560" rx="48" ry="28" fill="#b4daf0" opacity="0.16" filter="url(#wc-soft)"/>
+          <ellipse cx="820" cy="80"  rx="42" ry="26" fill="#b0d6ec" opacity="0.14" filter="url(#wc-soft)"/>
+
+          <!-- ③ 主大陆水彩底色晕染 -->
+          <ellipse cx="410" cy="268" rx="310" ry="200" fill="url(#land-g)" opacity="0.55" filter="url(#wc-soft)"/>
+
+          <!-- ③ 主大陆轮廓（手绘风路径，双层：底层柔边+顶层实色） -->
+          <path d="M148 168 Q130 130 165 110 Q218 88 290 100 Q365 86 438 104
+                   Q514 92 578 112 Q634 102 675 132 Q712 152 722 184
+                   Q740 222 714 265 Q692 305 662 332 Q627 364 586 382
+                   Q536 406 480 416 Q424 432 368 416 Q305 432 252 410
+                   Q194 392 165 360 Q138 326 136 288 Q128 224 148 168Z"
+                fill="url(#land-g)" opacity="0.5" filter="url(#wc-soft)"/>
+          <path d="M148 168 Q130 130 165 110 Q218 88 290 100 Q365 86 438 104
+                   Q514 92 578 112 Q634 102 675 132 Q712 152 722 184
+                   Q740 222 714 265 Q692 305 662 332 Q627 364 586 382
+                   Q536 406 480 416 Q424 432 368 416 Q305 432 252 410
+                   Q194 392 165 360 Q138 326 136 288 Q128 224 148 168Z"
+                fill="#9cd888" opacity="0.55" stroke="#78c860" stroke-width="2.5"
+                stroke-linejoin="round" filter="url(#sketch)"/>
+
+          <!-- ④ 地形色块：草地高亮 -->
+          <ellipse cx="240" cy="310" rx="70" ry="55" fill="#b8f0a0" opacity="0.45" filter="url(#wc-soft)"/>
+          <ellipse cx="520" cy="200" rx="65" ry="50" fill="#a8e890" opacity="0.4" filter="url(#wc-soft)"/>
+          <ellipse cx="460" cy="360" rx="55" ry="40" fill="#c0f0a8" opacity="0.4" filter="url(#wc-soft)"/>
+
+          <!-- ⑤ 山脉（水彩三角+晕染） -->
+          <!-- 右侧山脉 -->
+          <g filter="url(#wc-soft)" opacity="0.75">
+            <ellipse cx="465" cy="118" rx="68" ry="30" fill="#c8b8f0"/>
+          </g>
+          <path d="M422 134 L442 102 L462 132 L478 108 L496 134 L512 118 L525 136Z"
+                fill="url(#hill-g)" stroke="#a898d8" stroke-width="1.5"
+                stroke-linejoin="round" filter="url(#sketch)" opacity="0.9"/>
+          <!-- 积雪点 -->
+          <path d="M442 108 L448 118 L436 118Z" fill="white" opacity="0.7"/>
+          <path d="M478 114 L484 122 L472 122Z" fill="white" opacity="0.6"/>
+
+          <!-- 左侧小山 -->
+          <g filter="url(#wc-soft)" opacity="0.6">
+            <ellipse cx="246" cy="138" rx="48" ry="22" fill="#d0c0f4"/>
+          </g>
+          <path d="M212 152 L228 126 L244 152 L258 132 L274 150Z"
+                fill="url(#hill-g)" stroke="#a898d8" stroke-width="1.5"
+                stroke-linejoin="round" filter="url(#sketch)" opacity="0.85"/>
+
+          <!-- ⑥ 河流（水彩宽笔触） -->
+          <path d="M258 168 Q280 198 296 242 Q308 282 300 332 Q294 372 314 408"
+                stroke="#78c4f0" stroke-width="7" fill="none" stroke-linecap="round"
+                opacity="0.4" filter="url(#wc-soft)"/>
+          <path d="M258 168 Q280 198 296 242 Q308 282 300 332 Q294 372 314 408"
+                stroke="#58b0e8" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.75"/>
+
+          <!-- ⑦ 湖泊（水彩渐变+高光） -->
+          <ellipse cx="318" cy="260" rx="52" ry="34" fill="#78c4f0" opacity="0.4" filter="url(#wc-soft)"/>
+          <ellipse cx="318" cy="260" rx="46" ry="30" fill="url(#lake-g)" stroke="#48a8e0" stroke-width="1.5" opacity="0.85"/>
+          <ellipse cx="308" cy="252" rx="14" ry="7" fill="white" opacity="0.28"/>
+
+          <ellipse cx="500" cy="332" rx="36" ry="22" fill="#78c4f0" opacity="0.35" filter="url(#wc-soft)"/>
+          <ellipse cx="500" cy="332" rx="30" ry="18" fill="url(#lake-g)" stroke="#48a8e0" stroke-width="1.5" opacity="0.8"/>
+          <ellipse cx="492" cy="326" rx="9" ry="5" fill="white" opacity="0.25"/>
+
+          <!-- ⑧ 沙漠（水彩暖黄晕染） -->
+          <ellipse cx="452" cy="368" rx="70" ry="45" fill="#f8d880" opacity="0.4" filter="url(#wc-soft)"/>
+          <path d="M402 346 Q454 328 500 348 Q532 362 516 394 Q480 420 428 410 Q390 398 382 370 Q376 352 402 346Z"
+                fill="url(#desert-g)" stroke="#e8c048" stroke-width="1.5"
+                stroke-linejoin="round" filter="url(#sketch)" opacity="0.85"/>
+          <!-- 沙丘纹 -->
+          <path d="M408 368 Q428 360 452 366 Q470 371 488 364" stroke="#e8c048" stroke-width="1" fill="none" opacity="0.4"/>
+          <path d="M412 380 Q434 372 458 378 Q474 383 492 376" stroke="#e8c048" stroke-width="0.8" fill="none" opacity="0.3"/>
+
+          <!-- ⑨ 小岛 -->
+          <ellipse cx="674" cy="306" rx="68" ry="46" fill="#78e898" opacity="0.35" filter="url(#wc-soft)"/>
+          <ellipse cx="674" cy="306" rx="58" ry="38" fill="url(#isle-g)" stroke="#48c868" stroke-width="1.5" filter="url(#sketch)" opacity="0.88"/>
+          <ellipse cx="660" cy="296" rx="15" ry="8" fill="white" opacity="0.2"/>
+
+          <ellipse cx="748" cy="400" rx="50" ry="32" fill="#fef080" opacity="0.35" filter="url(#wc-soft)"/>
+          <ellipse cx="748" cy="400" rx="40" ry="26" fill="url(#isle2-g)" stroke="#d8b840" stroke-width="1.5" filter="url(#sketch)" opacity="0.85"/>
+
+          <ellipse cx="118" cy="442" rx="56" ry="40" fill="#88e8a0" opacity="0.35" filter="url(#wc-soft)"/>
+          <ellipse cx="118" cy="442" rx="46" ry="32" fill="url(#isle-g)" stroke="#48c868" stroke-width="1.5" filter="url(#sketch)" opacity="0.85"/>
+
+          <!-- ⑩ 森林（水彩圆点笔触） -->
+          <g opacity="0.82">
+            <!-- 左侧森林 -->
+            <circle cx="188" cy="292" r="22" fill="#58c840" opacity="0.28" filter="url(#wc-soft)"/>
+            <circle cx="188" cy="292" r="14" fill="#68d850" opacity="0.7"/>
+            <circle cx="210" cy="278" r="11" fill="#78e060" opacity="0.65"/>
+            <circle cx="226" cy="294" r="13" fill="#58c840" opacity="0.7"/>
+            <circle cx="200" cy="304" r="9"  fill="#48b830" opacity="0.55"/>
+            <!-- 右侧森林 -->
+            <circle cx="556" cy="212" r="20" fill="#58c840" opacity="0.28" filter="url(#wc-soft)"/>
+            <circle cx="556" cy="212" r="13" fill="#68d850" opacity="0.65"/>
+            <circle cx="575" cy="200" r="11" fill="#78e060" opacity="0.6"/>
+            <circle cx="589" cy="214" r="12" fill="#58c840" opacity="0.65"/>
+          </g>
+
+          <!-- ⑪ 道路（水彩虚线，比之前更柔） -->
+          <g stroke="#d8a840" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="6,5" opacity="0.6">
+            <path d="M230 240 Q280 228 318 260 Q358 288 400 270"/>
+            <path d="M400 270 Q442 250 490 274 Q526 296 546 338"/>
+            <path d="M318 260 Q326 330 368 370 Q402 397 432 380"/>
+            <path d="M490 274 Q534 222 574 208 Q612 198 642 222"/>
+          </g>
+
+          <!-- ⑫ 装饰植被（水彩手绘树） -->
+          <!-- 树：圆形笔触叠加 -->
+          <g opacity="0.78">
+            <circle cx="170" cy="274" r="9" fill="#38a828" opacity="0.6"/>
+            <circle cx="166" cy="270" r="6" fill="#58c840" opacity="0.7"/>
+            <rect   x="168" y="278" width="3" height="7" rx="1.5" fill="#8b5a2b" opacity="0.6"/>
+
+            <circle cx="184" cy="268" r="8" fill="#48b830" opacity="0.6"/>
+            <circle cx="181" cy="264" r="5" fill="#68d850" opacity="0.7"/>
+            <rect   x="182" y="272" width="3" height="6" rx="1.5" fill="#8b5a2b" opacity="0.6"/>
+
+            <circle cx="548" cy="196" r="9" fill="#38a828" opacity="0.55"/>
+            <circle cx="545" cy="192" r="6" fill="#58c840" opacity="0.65"/>
+            <rect   x="546" y="200" width="3" height="7" rx="1.5" fill="#8b5a2b" opacity="0.55"/>
+
+            <circle cx="562" cy="188" r="7" fill="#48b830" opacity="0.55"/>
+            <circle cx="560" cy="185" r="5" fill="#78e060" opacity="0.6"/>
+            <rect   x="560" y="192" width="3" height="6" rx="1.5" fill="#8b5a2b" opacity="0.5"/>
+          </g>
+
+          <!-- ⑬ 小花装饰 -->
+          <g opacity="0.6" font-size="11">
+            <text x="345" y="308">🌸</text>
+            <text x="196" y="340">🌼</text>
+            <text x="604" y="248">🌿</text>
+            <text x="132" y="418">🌺</text>
+            <text x="702" y="346">🌴</text>
+          </g>
+
+          <!-- ⑭ 地名标注（水彩手写感） -->
+          <g font-family="ZCOOL KuaiLe,cursive" fill="#5c3d2e">
+            <text x="290" y="205" font-size="11" opacity="0.75" transform="rotate(-3,290,205)">洱海</text>
+            <text x="468" y="340" font-size="10" opacity="0.7"  transform="rotate(2,468,340)">金色湾</text>
+            <text x="646" y="302" font-size="10" opacity="0.72" transform="rotate(-2,646,302)">彩虹岛</text>
+            <text x="728" y="396" font-size="9"  opacity="0.68" transform="rotate(3,728,396)">沙之岛</text>
+            <text x="92"  y="438" font-size="9"  opacity="0.68" transform="rotate(-2,92,438)">翡翠湾</text>
+            <text x="418" y="116" font-size="9"  opacity="0.65" transform="rotate(-1,418,116)">云顶山</text>
+            <text x="198" y="134" font-size="9"  opacity="0.65" transform="rotate(2,198,134)">雾峰</text>
+          </g>
+
+          <!-- ⑮ 水彩叠色晕染（整体统一色调） -->
+          <rect width="800" height="600" fill="rgba(200,232,246,0.08)"/>
+
+          <!-- 指北针 -->
+          <g transform="translate(756,38)" opacity="0.6">
+            <circle cx="0" cy="0" r="14" fill="rgba(255,255,255,0.6)" stroke="#c89850" stroke-width="1"/>
+            <path d="M0,-11 L3,2 L0,-1 L-3,2Z" fill="#e05038"/>
+            <path d="M0,11 L3,-1 L0,2 L-3,-1Z" fill="#888"/>
+            <text x="0" y="-14" font-size="7" text-anchor="middle" fill="#5c3d2e" font-family="sans-serif">N</text>
+          </g>
+        </svg>
+
+        <!-- 节点容器 -->
+        <div id="nodes-container"></div>
+
+        <!-- 小巴士 -->
+        <div id="bus">
+          <div id="bus-inner">
+            <svg viewBox="0 0 52 34" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="7" width="46" height="20" rx="4" fill="#f97316"/>
+              <rect x="5" y="4" width="38" height="9" rx="3" fill="#fb923c"/>
+              <rect x="42" y="9" width="7" height="14" rx="2.5" fill="#fdba74"/>
+              <rect x="7"  y="10" width="8"  height="6" rx="1.5" fill="#bfdbfe" opacity=".9"/>
+              <rect x="18" y="10" width="8"  height="6" rx="1.5" fill="#bfdbfe" opacity=".9"/>
+              <rect x="29" y="10" width="8"  height="6" rx="1.5" fill="#bfdbfe" opacity=".9"/>
+              <rect x="44" y="11" width="4"  height="4" rx="1" fill="#fed7aa" opacity=".8"/>
+              <circle cx="11" cy="28" r="5" fill="#1f2937"/>
+              <circle cx="11" cy="28" r="2.5" fill="#6b7280"/>
+              <circle cx="38" cy="28" r="5" fill="#1f2937"/>
+              <circle cx="38" cy="28" r="2.5" fill="#6b7280"/>
+              <circle cx="48" cy="12" r="2" fill="#fef08a" opacity=".9"/>
+              <circle cx="48" cy="19" r="2" fill="#fca5a5" opacity=".9"/>
+              <rect x="33" y="12" width="7" height="11" rx="1.2" fill="#ea580c" opacity=".5"/>
+            </svg>
+          </div>
+        </div>
+
+        </div><!-- /map-canvas -->
+
+        <!-- 图例 -->
+        <div id="legend">
+          <div class="leg-item"><div class="leg-dot" style="background:#f97316"></div>旅行</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#8b5cf6"></div>读书</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#ec4899"></div>影视</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#10b981"></div>生活</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#f59e0b"></div>美食</div>
+        </div>
+
+        <!-- 标题 -->
+        <div id="site-title">
+          <h1>✦ 我的生存日记</h1>
+          <p>滚轮缩放 · 拖拽平移 · 点击光点</p>
+        </div>
+
+        <!-- 缩放控制 -->
+        <div id="zoom-hint">
+          <button class="zoom-btn" onclick="zoomMap(0.25)">+</button>
+          <div id="zoom-level">100%</div>
+          <button class="zoom-btn" onclick="zoomMap(-0.25)">−</button>
+          <button class="zoom-btn" onclick="resetMap()" title="复位" style="font-size:13px;">⌂</button>
+        </div>
+
+        <!-- 编辑模式按钮 -->
+        <button id="edit-mode-btn" onclick="toggleEditMode()">✏️ 编辑</button>
+        <div id="edit-hint">点空白处添加节点</div>
+
+        <!-- 想法面板 -->
+        <div id="thought-panel">
+          <div class="t-list" id="t-list"></div>
+        </div>
+        <div id="bar" onclick="togglePanel()">
+          <div id="scroll-wrap"></div>
+        </div>
+
+      </div><!-- /stage -->
+    </div><!-- /left-page -->
+
+    <!-- ===== 右页：内容区 ===== -->
+    <div id="right-page">
+
+      <!-- 等待状态（翻开封面后显示） -->
+      <div id="rp-idle">
+        <div class="idle-icon">🗺️</div>
+        <div class="idle-text">点击地图上的光点<br>翻开那一页日记</div>
+      </div>
+
+      <!-- 日记内容 -->
+      <div id="rp-diary">
+        <div class="pg-date" id="pg-date"></div>
+        <div class="collage" id="pg-collage"></div>
+        <div class="pg-desc" id="pg-desc"></div>
+        <div class="pg-loc" id="pg-loc"></div>
+      </div>
+
+      <!-- 关闭日记 -->
+      <button id="close-diary" onclick="closeDiary()">✕</button>
+
+      <!-- 翻页控制 -->
+      <div id="page-nav">
+        <button class="nav-btn" id="nav-prev" onclick="changeEntry(-1)">‹</button>
+        <span id="pg-counter"></span>
+        <button class="nav-btn" id="nav-next" onclick="changeEntry(1)">›</button>
+      </div>
+
+    </div><!-- /right-page -->
+
+    <!-- ===== 封面（翻转覆盖整本书） ===== -->
+
+    <div id="cover" onclick="openBook()">
+      <!-- 封面正面 -->
+      <div id="cover-front">
+        <div class="cv-bd"></div>
+        <div class="cv-bd2"></div>
+
+        <div class="cv-title-wrap">
+          <div class="cv-title">
+            我的生存日记
+            <span>MY SURVIVAL DIARY</span>
+          </div>
+          <div class="cv-divider"></div>
+          <div class="cv-year">2024 — 2025</div>
+        </div>
+
+        <div class="cv-char">
+          <img src="jimeng-2026-03-17-1998-将人物转化为Q版可爱卡通形象，保留人物的绿色毛衣、卡其色背带裤和透明雨伞元素.png"
+               alt="卡通人物"
+               style="height:min(260px,38vh);width:auto;object-fit:contain;
+                      filter:drop-shadow(0 8px 26px rgba(0,0,0,0.28));display:block;"
+               onerror="this.style.display='none';this.parentElement.innerHTML='<div style=\'font-size:80px\'>📖</div>'"/>
+        </div>
+
+        <div class="cv-bottom">
+          <div class="cv-hint">✦ 点击翻开 ✦</div>
+        </div>
+      </div>
+
+      <!-- 封面背面（隐藏） -->
+      <div id="cover-back"></div>
+    </div><!-- /cover -->
+
+  </div><!-- /book-wrap -->
+</div><!-- /scene -->
+
+<!-- 翻页动画层（在书外，全屏覆盖） -->
+<div id="page-turn-anim"></div>
+
+<!-- ── 右键菜单 ── -->
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-edit" onclick="ctxEditNode()">✏️ 编辑节点</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" id="ctx-delete" onclick="ctxDeleteNode()">🗑️ 删除节点</div>
+</div>
+
+<!-- ── 编辑/新增弹窗 ── -->
+<div id="modal-overlay" onclick="closeModal(event)">
+  <div id="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title">编辑节点</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label class="form-label">节点名称 *</label>
+        <input class="form-input" id="f-name" placeholder="例：大理·洱海" maxlength="30"/>
+      </div>
+      <div class="form-row-2">
+        <div>
+          <label class="form-label">日期</label>
+          <input class="form-input" id="f-date" placeholder="2024.07.15"/>
+        </div>
+        <div>
+          <label class="form-label">天气</label>
+          <input class="form-input" id="f-weather" placeholder="☀️ 晴，微风"/>
+        </div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">类型</label>
+        <div class="type-btns" id="f-type-btns">
+          <button class="type-btn" data-type="travel">🧳 旅行</button>
+          <button class="type-btn" data-type="life">🌱 生活</button>
+          <button class="type-btn" data-type="book">📚 读书</button>
+          <button class="type-btn" data-type="film">🎬 影视</button>
+          <button class="type-btn" data-type="food">🍜 美食</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">地点名称</label>
+        <input class="form-input" id="f-location" placeholder="例：大理·洱海"/>
+      </div>
+      <div class="form-row">
+        <label class="form-label">描述内容</label>
+        <textarea class="form-textarea" id="f-desc" placeholder="写下那段时光的记忆…" rows="3"></textarea>
+      </div>
+      <div class="form-row">
+        <label class="form-label">照片（用逗号分隔 Emoji，最多3个）</label>
+        <input class="form-input" id="f-photos" placeholder="🌊,🏔️,🌸"/>
+      </div>
+      <div class="form-row">
+        <label class="form-label">落款</label>
+        <input class="form-input" id="f-sign" placeholder="—— 在洱海边发呆的下午"/>
+      </div>
+      <div class="form-row">
+        <label class="form-label">地图位置（点击地图时自动填入）</label>
+        <div class="pos-preview" id="f-pos-preview">X: — , Y: —</div>
+        <input type="hidden" id="f-pos-x"/>
+        <input type="hidden" id="f-pos-y"/>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn-save" onclick="saveNode()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  localStorage 持久化
+// ============================================================
+const LS_ENTRIES  = 'diary_entries_v1';
+const LS_THOUGHTS = 'diary_thoughts_v1';
+
+const DEFAULT_ENTRIES = [
+  {
+    id:1, name:"大理·洱海", date:"2024.07.15", weather:"☀️ 晴，微风",
+    location:"大理·洱海", type:"travel",
+    pos:{x:39,y:43},
+    desc:"骑着电车绕湖一圈，路边的薰衣草已经开败了，但风还是那么软，像被人轻轻拍了拍肩膀。",
+    photos:["🌊","🏔️","🌸"],
+    cards:[
+      {type:"book",  cover:"📖", title:"《孤独星球·云南》",  review:"按图索骥却发现最好的地方都没在上面。"},
+      {type:"music", cover:"🎵", title:"赵雷《成都》",       review:"耳机里单曲循环，骑到第三圈才反应过来放错城市了。"}
+    ],
+    sign:"—— 在洱海边发呆的下午",private:false
+  },
+  {
+    id:2, name:"云顶山看日出", date:"2024.08.03", weather:"🌤️ 多云转晴",
+    location:"云顶山·山顶", type:"life",
+    pos:{x:54,y:21},
+    desc:"凌晨三点出发，爬到山顶冻得发抖，但等到那束橘红色的光从云缝里挤出来，所有抱怨都忘了。",
+    photos:["🌅","⛺"],
+    cards:[
+      {type:"film", cover:"🎬", title:"《步履不停》", review:"看完觉得要多爬几次山，多吃几顿饭。"}
+    ],
+    sign:"—— 被日出治愈的早晨",private:false
+  },
+  {
+    id:3, name:"彩虹岛漂流", date:"2024.09.20", weather:"🌧️ 阵雨",
+    location:"彩虹岛", type:"travel",
+    pos:{x:83,y:51},
+    desc:"本来嫌下雨扫兴，后来发现雨中漂流才是最爽的，整条船的陌生人都笑成了一团。",
+    photos:["🌈","🚣","💦"],
+    cards:[
+      {type:"book", cover:"📚", title:"《岛》阿明·马洛夫",   review:"在岛上读关于岛的故事，双重孤独又双重自由。"},
+      {type:"food", cover:"🍜", title:"岛上海鲜面",           review:"虾是今天刚上来的，咬一口鲜得眼睛发亮。"}
+    ],
+    sign:"—— 湿透了但很快乐",private:false
+  },
+  {
+    id:4, name:"翡翠湾冬日", date:"2024.12.28", weather:"❄️ 小雪",
+    location:"翡翠湾", type:"life",
+    pos:{x:15,y:73},
+    desc:"第一次见到海边下雪。浪打上来是热的，雪落下来是冷的，我站在中间，什么都没想。",
+    photos:["❄️"],
+    cards:[
+      {type:"book",  cover:"📕", title:"《挪威的森林》",  review:"冬天读这本才对味，冷冷的，又有什么东西在生长。"},
+      {type:"music", cover:"🎼", title:"久石让《Summer》", review:"反季节播放，效果奇佳。"}
+    ],
+    sign:"—— 海边下雪这件小事",private:false
+  },
+  {
+    id:5, name:"城中藏书阁", date:"2025.01.12", weather:"🌥️ 阴",
+    location:"金色湾·旧书街", type:"book",
+    pos:{x:61,y:57},
+    desc:"在旧书摊淘到一本60年代的诗集，书页已经发黄，上面有人用蓝色钢笔划线，不知道是谁，不知道他现在在哪里。",
+    photos:["📚","☕"],
+    cards:[
+      {type:"book", cover:"📗", title:"《穆旦诗集》",       review:"翻到「我爱在淡淡的太阳短命的日子」，站在书摊就背出来了。"},
+      {type:"film", cover:"🎥", title:"《查令十字街84号》", review:"这本书应该在这个下午读完。"}
+    ],
+    sign:"—— 旧书的味道",private:false
+  },
+  {
+    id:6, name:"私密日记", date:"2025.02.14", weather:"💝 晴",
+    location:"某个地方", type:"life",
+    pos:{x:68,y:35},
+    desc:"私密内容", photos:["💝"], cards:[], sign:"", private:true
+  },
+  {
+    id:7, name:"沙之岛美食节", date:"2025.03.05", weather:"🌞 晴热",
+    location:"沙之岛", type:"food",
+    pos:{x:91,y:66},
+    desc:"岛上一年一度的美食节，摆了几十个摊，从早吃到晚，骑着自行车找好吃的，走哪吃哪，快乐得像只小猪。",
+    photos:["🍢","🦐","🥭"],
+    cards:[
+      {type:"food",  cover:"🍤", title:"炸虾饼",     review:"外酥里嫩，一口一个，吃了八个。"},
+      {type:"music", cover:"🎺", title:"现场爵士乐队", review:"配海风，配冰饮，配什么都好。"}
+    ],
+    sign:"—— 胃是最诚实的",private:false
+  }
+];
+
+const DEFAULT_THOUGHTS = [
+  {date:"2025.03.10", text:"想把整个夏天都装进日记本里。"},
+  {date:"2025.02.28", text:"出发之前总觉得麻烦，回来之后总庆幸出发了。"},
+  {date:"2025.02.14", text:"今天的光线很好，是那种让人想记住的好。"},
+  {date:"2025.01.20", text:"买了一张地图贴在墙上，想把去过的地方都画上圈。"},
+  {date:"2024.12.31", text:"跨年不想倒数，想找个安静的地方看看星星。"},
+  {date:"2024.11.15", text:"秋天的风有种让人想流浪的味道。"},
+  {date:"2024.09.01", text:"人生就是不断地把「有空再说」变成「就是今天」。"}
+];
+
+// 从 localStorage 加载，否则用默认数据
+let ENTRIES  = JSON.parse(localStorage.getItem(LS_ENTRIES))  || DEFAULT_ENTRIES;
+let THOUGHTS = JSON.parse(localStorage.getItem(LS_THOUGHTS)) || DEFAULT_THOUGHTS;
+
+function saveEntries()  { localStorage.setItem(LS_ENTRIES,  JSON.stringify(ENTRIES));  }
+function saveThoughts() { localStorage.setItem(LS_THOUGHTS, JSON.stringify(THOUGHTS)); }
+
+// 下一个可用 ID
+function nextId() { return ENTRIES.length ? Math.max(...ENTRIES.map(e => e.id)) + 1 : 1; }
+
+// ============================================================
+//  渲染节点（函数化，支持重新渲染）
+// ============================================================
+const nodesContainer = document.getElementById('nodes-container');
+
+function renderNodes() {
+  nodesContainer.innerHTML = '';
+  ENTRIES.forEach(entry => {
+    const el = document.createElement('div');
+    el.className = `node type-${entry.type}`;
+    el.style.left = entry.pos.x + '%';
+    el.style.top  = entry.pos.y + '%';
+    el.dataset.id = entry.id;
+    el.innerHTML = `
+      <div class="dot"></div>
+      <div class="tip">
+        <span class="tip-name">${entry.name}</span>
+        <span class="tip-date">${entry.date}</span>
+      </div>`;
+    el.addEventListener('mouseenter', () => driveBusTo(entry.pos));
+    el.addEventListener('click', ev => {
+      if (editMode) {
+        ev.stopPropagation();
+        openEditModal(entry.id);
+      } else {
+        openEntry(entry.id);
+      }
+    });
+    el.addEventListener('contextmenu', ev => {
+      if (editMode) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        showCtxMenu(ev.clientX, ev.clientY, entry.id);
+      }
+    });
+    nodesContainer.appendChild(el);
+  });
+}
+
+renderNodes();
+
+// ============================================================
+//  想法条
+// ============================================================
+const scrollWrap = document.getElementById('scroll-wrap');
+const doubled = [...THOUGHTS, ...THOUGHTS];
+scrollWrap.innerHTML = doubled.map(t => `<span class="thought-item">${t.text}</span>`).join('');
+
+const tList = document.getElementById('t-list');
+THOUGHTS.forEach(t => {
+  tList.innerHTML += `
+    <div class="t-entry">
+      <span class="t-d">${t.date}</span>
+      <span class="t-t">${t.text}</span>
+    </div>`;
+});
+
+let panelOpen = false;
+function togglePanel() {
+  panelOpen = !panelOpen;
+  document.getElementById('thought-panel').classList.toggle('open', panelOpen);
+}
+
+// ============================================================
+//  封面翻开
+// ============================================================
+let bookOpened = false;
+
+function openBook() {
+  if (bookOpened) return;
+  bookOpened = true;
+  const cover = document.getElementById('cover');
+  // 先展宽书本，延迟一点再翻封面，让展宽动画先走一段
+  document.getElementById('book-wrap').classList.add('opened');
+  setTimeout(() => {
+    cover.classList.add('opened');
+  }, 200);
+}
+
+function closeBook() {
+  if (!bookOpened) return;
+  // 先关闭日记（如果有）
+  if (currentIdx >= 0) {
+    const diaryEl = document.getElementById('rp-diary');
+    const idleEl  = document.getElementById('rp-idle');
+    const nav     = document.getElementById('page-nav');
+    const closeBtn= document.getElementById('close-diary');
+    diaryEl.classList.remove('show');
+    idleEl.classList.remove('hidden');
+    nav.classList.remove('show');
+    closeBtn.classList.remove('show');
+    currentIdx = -1;
+  }
+  bookOpened = false;
+  const cover = document.getElementById('cover');
+  cover.classList.remove('opened');
+  // 封面归位后再收窄书本
+  setTimeout(() => {
+    document.getElementById('book-wrap').classList.remove('opened');
+  }, 600);
+}
+
+
+// ============================================================
+//  小巴士
+// ============================================================
+const bus = document.getElementById('bus');
+let busX = 0, busY = 0, targetX = 0, targetY = 0, busAngle = 0;
+let isUserDriving = false, userTimer = null, lastTime = null;
+
+const waypoints = [
+  {x:20,y:40},{x:39,y:43},{x:54,y:21},{x:61,y:57},
+  {x:68,y:35},{x:83,y:51},{x:91,y:66},{x:72,y:72},
+  {x:50,y:65},{x:28,y:58},{x:15,y:73},{x:22,y:32}
+];
+let wpIdx = 0;
+const BUS_SPD = 100, BUS_SPD_FAST = 160;
+let curSpd = BUS_SPD;
+
+function getStageSize() {
+  // 画布固定 800×600，巴士坐标基于画布尺寸
+  return {w: 800, h: 600};
+}
+function pctToPx(xp, yp) {
+  return {x: xp/100*800, y: yp/100*600};
+}
+function setBus() {
+  bus.style.left = (busX - 25) + 'px';
+  bus.style.top  = (busY - 16) + 'px';
+  bus.style.transform = `rotate(${busAngle}deg)`;
+}
+function driveBusTo(pos) {
+  isUserDriving = true;
+  const p = pctToPx(pos.x, pos.y);
+  targetX = p.x; targetY = p.y;
+  curSpd = BUS_SPD_FAST;
+  clearTimeout(userTimer);
+  userTimer = setTimeout(() => { isUserDriving = false; curSpd = BUS_SPD; }, 5000);
+}
+function busLoop(ts) {
+  if (!lastTime) lastTime = ts;
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+  if (!isUserDriving) {
+    const wp = pctToPx(waypoints[wpIdx].x, waypoints[wpIdx].y);
+    const dx0 = wp.x - busX, dy0 = wp.y - busY;
+    if (Math.sqrt(dx0*dx0+dy0*dy0) < 8) wpIdx = (wpIdx+1) % waypoints.length;
+    const wp2 = pctToPx(waypoints[wpIdx].x, waypoints[wpIdx].y);
+    targetX = wp2.x; targetY = wp2.y;
+  }
+  const dx = targetX - busX, dy = targetY - busY;
+  const d = Math.sqrt(dx*dx + dy*dy);
+  if (d > 2) {
+    const spd = d < 60 ? Math.max(curSpd*(d/60), 25) : curSpd;
+    const r = Math.min(spd*dt/d, 1);
+    busX += dx*r; busY += dy*r;
+    const ta = Math.atan2(dy,dx)*180/Math.PI;
+    let da = ta - busAngle;
+    while (da > 180) da -= 360;
+    while (da < -180) da += 360;
+    busAngle += da * Math.min(dt*6, 0.3);
+    bus.classList.add('moving');
+  } else {
+    bus.classList.remove('moving');
+  }
+  setBus();
+  requestAnimationFrame(busLoop);
+}
+(function initBus() {
+  busX = waypoints[0].x/100*800;
+  busY = waypoints[0].y/100*600;
+  setBus();
+  requestAnimationFrame(busLoop);
+})();
+
+// ============================================================
+//  日记翻页逻辑
+// ============================================================
+let currentIdx = -1;
+let isAnimating = false;
+
+function openEntry(id) {
+  if (!bookOpened) {
+    // 先翻开封面再打开日记
+    openBook();
+    setTimeout(() => openEntry(id), 1600);
+    return;
+  }
+  const idx = ENTRIES.findIndex(e => e.id === id);
+  if (idx === currentIdx) return;
+  if (isAnimating) return;
+
+  if (currentIdx === -1) {
+    // 首次打开：直接翻页进入
+    currentIdx = idx;
+    showDiaryWithAnim('in');
+  } else {
+    // 切换日记：翻页动画
+    isAnimating = true;
+    doPageTurn(() => {
+      currentIdx = idx;
+      renderDiary(ENTRIES[currentIdx]);
+      isAnimating = false;
+    });
+  }
+}
+
+function showDiaryWithAnim(dir) {
+  const idleEl = document.getElementById('rp-idle');
+  const diaryEl = document.getElementById('rp-diary');
+  const rightPage = document.getElementById('right-page');
+  const nav = document.getElementById('page-nav');
+  const closeBtn = document.getElementById('close-diary');
+
+  isAnimating = true;
+
+  // 翻页动画
+  doPageTurn(() => {
+    idleEl.classList.add('hidden');
+    diaryEl.classList.add('show');
+    renderDiary(ENTRIES[currentIdx]);
+    nav.classList.add('show');
+    closeBtn.classList.add('show');
+    isAnimating = false;
+  });
+}
+
+function closeDiary() {
+  if (isAnimating) return;
+  isAnimating = true;
+  const idleEl = document.getElementById('rp-idle');
+  const diaryEl = document.getElementById('rp-diary');
+  const nav = document.getElementById('page-nav');
+  const closeBtn = document.getElementById('close-diary');
+
+  doPageTurn(() => {
+    diaryEl.classList.remove('show');
+    idleEl.classList.remove('hidden');
+    nav.classList.remove('show');
+    closeBtn.classList.remove('show');
+    currentIdx = -1;
+    isAnimating = false;
+  });
+}
+
+function changeEntry(dir) {
+  if (isAnimating) return;
+  const newIdx = (currentIdx + dir + ENTRIES.length) % ENTRIES.length;
+  isAnimating = true;
+  doPageTurn(() => {
+    currentIdx = newIdx;
+    renderDiary(ENTRIES[currentIdx]);
+    isAnimating = false;
+  });
+}
+
+// 真实翻页动画：在右页容器内做3D翻转
+function doPageTurn(callback) {
+  const rp = document.getElementById('right-page');
+
+  // 创建翻页纸片
+  const sheet = document.createElement('div');
+  sheet.className = 'turn-sheet';
+  sheet.style.cssText = `
+    position:absolute;inset:0;z-index:50;
+    background:var(--paper);
+    background-image:repeating-linear-gradient(transparent,transparent 27px,var(--line) 27px,var(--line) 28px);
+    border-radius:0 6px 6px 0;
+    transform-origin:left center;
+    transform:perspective(800px) rotateY(0deg);
+    transition:transform .65s cubic-bezier(.4,0,.2,1),box-shadow .65s ease;
+    box-shadow:inset 10px 0 26px rgba(0,0,0,0.1);
+    pointer-events:none;
+  `;
+
+  // 翻页纸背面（新页面颜色提示）
+  const sheetBack = document.createElement('div');
+  sheetBack.style.cssText = `
+    position:absolute;inset:0;
+    background:#f5e8cc;
+    border-radius:0 6px 6px 0;
+    backface-visibility:hidden;
+    transform:rotateY(180deg);
+  `;
+  sheet.appendChild(sheetBack);
+  rp.appendChild(sheet);
+
+  // 翻转动画
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      sheet.style.transform = 'perspective(800px) rotateY(-90deg)';
+      sheet.style.boxShadow = '6px 0 20px rgba(0,0,0,0.2)';
+    });
+  });
+
+  // 到90度时执行内容切换
+  setTimeout(() => {
+    if (callback) callback();
+    sheet.style.transform = 'perspective(800px) rotateY(-180deg)';
+    sheet.style.boxShadow = 'none';
+    sheet.style.opacity = '0';
+    sheet.style.transition = 'transform .5s cubic-bezier(.4,0,.2,1),opacity .3s ease .2s';
+  }, 340);
+
+  setTimeout(() => {
+    sheet.remove();
+  }, 900);
+}
+
+function renderDiary(entry) {
+  // 更新翻页计数
+  document.getElementById('pg-counter').textContent = `${currentIdx + 1} / ${ENTRIES.length}`;
+  document.getElementById('nav-prev').disabled = false;
+  document.getElementById('nav-next').disabled = false;
+
+  const diaryEl = document.getElementById('rp-diary');
+
+  if (entry.private) {
+    diaryEl.innerHTML = `
+      <div class="private-mask">
+        <div class="lock-icon">🔒</div>
+        <div>这是主人的私密回忆</div>
+      </div>`;
+    return;
+  }
+
+  // 照片拼贴
+  const cnt = Math.min(entry.photos.length, 3);
+  const collageClass = `collage c${cnt}`;
+  const collageHTML = entry.photos.slice(0,cnt).map(p => `<div class="ph">${p}</div>`).join('');
+
+  // 卡片
+  const typeLabel = {book:'书', film:'影', music:'乐', food:'食'};
+  const cardsHTML = entry.cards.map(c => `
+    <div class="card">
+      <div class="card-cover">${c.cover}</div>
+      <div class="card-info">
+        <span class="card-type">${typeLabel[c.type]||c.type}</span>
+        <div class="card-title">${c.title}</div>
+        <div class="card-review">${c.review}</div>
+      </div>
+    </div>`).join('');
+
+  diaryEl.innerHTML = `
+    <div class="pg-date">${entry.date} &nbsp;·&nbsp; ${entry.weather}</div>
+    <div class="${collageClass}">${collageHTML}</div>
+    <div class="pg-desc">${entry.desc}</div>
+    <div class="pg-loc">📍 ${entry.location}</div>
+    ${entry.cards.length ? `<div class="pg-cards-title">✦ 当时的痕迹</div><div class="pg-cards">${cardsHTML}</div>` : ''}
+    <div class="pg-sign">${entry.sign}</div>
+  `;
+}
+
+// ============================================================
+//  地图缩放平移（无限地图模式）
+// ============================================================
+const stage     = document.getElementById('stage');
+const mapCanvas = document.getElementById('map-canvas');
+const zoomLabel = document.getElementById('zoom-level');
+
+// mapTx/mapTy：相对于居中初始位置的额外偏移（px）
+let mapScale = 1, mapTx = 0, mapTy = 0;
+const MIN_SCALE = 0.18, MAX_SCALE = 5;
+
+function applyMapTransform() {
+  // map-canvas 通过 top:50% left:50% margin 已居中
+  // 再叠加用户拖拽偏移和缩放（以画布中心为原点）
+  mapCanvas.style.transform =
+    `translate(${mapTx}px,${mapTy}px) scale(${mapScale})`;
+  zoomLabel.textContent = Math.round(mapScale * 100) + '%';
+}
+
+// 以舞台内指定点 (cx,cy) 为基准缩放
+// 原理：stage中 (cx,cy) 对应的世界坐标在缩放前后保持不变
+// 画布实际中心在stage中的坐标 = (sw/2 + mapTx, sh/2 + mapTy)
+// transform: translate(mapTx,mapTy) scale(mapScale)，origin=center
+// 画布上某点 p 在stage中的位置 = (sw/2 + mapTx + p.x*mapScale, sh/2 + mapTy + p.y*mapScale)
+// 令 p = ((cx - sw/2 - mapTx)/mapScale, ...) 不变，解出新的 mapTx:
+function zoomAt(cx, cy, newScale) {
+  if (newScale === mapScale) return;
+  const sw = stage.clientWidth  || 400;
+  const sh = stage.clientHeight || 560;
+  // cx,cy 在以画布中心为原点的坐标
+  const px = cx - sw / 2 - mapTx;
+  const py = cy - sh / 2 - mapTy;
+  // 缩放后保持该点在stage中位置不变
+  mapTx += px - px * (newScale / mapScale);
+  mapTy += py - py * (newScale / mapScale);
+  mapScale = newScale;
+  applyMapTransform();
+}
+
+// 按钮缩放：以舞台中心为基准
+function zoomMap(delta) {
+  const sw = stage.clientWidth  || 400;
+  const sh = stage.clientHeight || 560;
+  const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, mapScale + delta));
+  zoomAt(sw / 2, sh / 2, newScale);
+}
+
+function resetMap() {
+  mapScale = 1; mapTx = 0; mapTy = 0;
+  mapCanvas.style.transition = 'transform .4s cubic-bezier(.4,0,.2,1)';
+  applyMapTransform();
+  setTimeout(() => { mapCanvas.style.transition = ''; }, 420);
+}
+
+// 滚轮缩放（以鼠标位置为基准）
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = stage.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+  const factor = e.deltaY < 0 ? 1.12 : 0.89;
+  const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, mapScale * factor));
+  zoomAt(cx, cy, newScale);
+}, { passive: false });
+
+// 拖拽平移（无边界限制）
+let isDragging = false, dragStartX = 0, dragStartY = 0, dragTx = 0, dragTy = 0;
+
+stage.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  isDragging = true;
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  dragTx = mapTx;
+  dragTy = mapTy;
+  stage.style.cursor = 'grabbing';
+});
+window.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  mapTx = dragTx + (e.clientX - dragStartX);
+  mapTy = dragTy + (e.clientY - dragStartY);
+  applyMapTransform();
+});
+window.addEventListener('mouseup', () => {
+  if (!isDragging) return;
+  isDragging = false;
+  stage.style.cursor = 'grab';
+});
+
+// 触摸支持（双指缩放 + 单指平移）
+let lastTouchDist = 0, lastTouchMidX = 0, lastTouchMidY = 0;
+let isTouchDragging = false, touchStartX = 0, touchStartY = 0, touchDragTx = 0, touchDragTy = 0;
+
+stage.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    const t0 = e.touches[0], t1 = e.touches[1];
+    lastTouchDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+    lastTouchMidX = (t0.clientX + t1.clientX) / 2;
+    lastTouchMidY = (t0.clientY + t1.clientY) / 2;
+    isTouchDragging = false;
+  } else if (e.touches.length === 1) {
+    isTouchDragging = true;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    touchDragTx = mapTx;
+    touchDragTy = mapTy;
+  }
+}, { passive: true });
+
+stage.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (e.touches.length === 2) {
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+    const midX = (t0.clientX + t1.clientX) / 2;
+    const midY = (t0.clientY + t1.clientY) / 2;
+    const rect = stage.getBoundingClientRect();
+    const cx = midX - rect.left, cy = midY - rect.top;
+    if (lastTouchDist > 0) {
+      const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, mapScale * (dist / lastTouchDist)));
+      zoomAt(cx, cy, newScale);
+    }
+    // 双指平移
+    mapTx += midX - lastTouchMidX;
+    mapTy += midY - lastTouchMidY;
+    lastTouchDist = dist;
+    lastTouchMidX = midX;
+    lastTouchMidY = midY;
+    applyMapTransform();
+  } else if (e.touches.length === 1 && isTouchDragging) {
+    mapTx = touchDragTx + (e.touches[0].clientX - touchStartX);
+    mapTy = touchDragTy + (e.touches[0].clientY - touchStartY);
+    applyMapTransform();
+  }
+}, { passive: false });
+
+stage.addEventListener('touchend', e => {
+  if (e.touches.length < 2) lastTouchDist = 0;
+  if (e.touches.length === 0) isTouchDragging = false;
+}, { passive: true });
+
+// ============================================================
+//  键盘导航
+// ============================================================
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.getElementById('modal-overlay').classList.contains('show')) { closeModal(); return; }
+    if (currentIdx >= 0) closeDiary();
+  }
+  if (currentIdx < 0) return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') changeEntry(1);
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   changeEntry(-1);
+});
+
+// ============================================================
+//  窗口resize：画布固定800×600，无需重算巴士坐标
+// ============================================================
+// （无限地图模式下画布尺寸固定，stage背景平铺自动填满）
+
+// ============================================================
+//  编辑模式
+// ============================================================
+let editMode = false;
+
+function toggleEditMode() {
+  editMode = !editMode;
+  const btn  = document.getElementById('edit-mode-btn');
+  const hint = document.getElementById('edit-hint');
+  btn.classList.toggle('active', editMode);
+  hint.classList.toggle('show', editMode);
+  stage.style.cursor = editMode ? 'crosshair' : 'grab';
+  // 编辑模式下禁用地图拖拽
+  if (editMode) {
+    btn.textContent = '✏️ 退出编辑';
+  } else {
+    btn.textContent = '✏️ 编辑';
+    hideCtxMenu();
+  }
+}
+
+// 编辑模式下点击地图空白处 → 新增节点
+stage.addEventListener('click', ev => {
+  if (!editMode) return;
+  // 如果点击的是节点，忽略（节点自己处理）
+  if (ev.target.closest('.node')) return;
+  hideCtxMenu();
+
+  // 计算点击位置转为百分比（基于 map-canvas 坐标系）
+  const rect = stage.getBoundingClientRect();
+  const sw = stage.clientWidth  || 400;
+  const sh = stage.clientHeight || 560;
+  // 鼠标在 stage 内的坐标
+  const sx = ev.clientX - rect.left;
+  const sy = ev.clientY - rect.top;
+  // 还原到画布坐标（画布中心在 stage 中心，再加偏移和缩放）
+  // canvas中心在stage中的位置 = (sw/2 + mapTx, sh/2 + mapTy)
+  // 画布内坐标 = (sx - sw/2 - mapTx) / mapScale，再转百分比
+  const cx = (sx - sw / 2 - mapTx) / mapScale;
+  const cy = (sy - sh / 2 - mapTy) / mapScale;
+  // 画布宽高固定 800×600
+  const px = (cx + 400) / 800 * 100;
+  const py = (cy + 300) / 600 * 100;
+  const clampedX = Math.max(2, Math.min(97, px));
+  const clampedY = Math.max(2, Math.min(97, py));
+
+  openAddModal(clampedX, clampedY);
+});
+
+// ============================================================
+//  右键菜单
+// ============================================================
+let ctxTargetId = null;
+
+function showCtxMenu(x, y, id) {
+  ctxTargetId = id;
+  const menu = document.getElementById('ctx-menu');
+  menu.classList.add('show');
+  // 防止超出视口
+  const mw = 140, mh = 80;
+  const left = x + mw > window.innerWidth  ? x - mw : x;
+  const top  = y + mh > window.innerHeight ? y - mh : y;
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+}
+
+function hideCtxMenu() {
+  document.getElementById('ctx-menu').classList.remove('show');
+  ctxTargetId = null;
+}
+
+document.addEventListener('click', () => hideCtxMenu());
+
+function ctxEditNode() {
+  if (ctxTargetId == null) return;
+  openEditModal(ctxTargetId);
+  hideCtxMenu();
+}
+
+function ctxDeleteNode() {
+  if (ctxTargetId == null) return;
+  const entry = ENTRIES.find(e => e.id === ctxTargetId);
+  if (!entry) return;
+  if (!confirm(`确定删除节点「${entry.name}」吗？此操作不可撤销。`)) return;
+  ENTRIES = ENTRIES.filter(e => e.id !== ctxTargetId);
+  saveEntries();
+  renderNodes();
+  hideCtxMenu();
+  // 如果正在查看该节点，关闭日记
+  if (currentIdx >= 0 && ENTRIES[currentIdx] && ENTRIES[currentIdx].id === ctxTargetId) {
+    closeDiary();
+  }
+  showToast('节点已删除');
+}
+
+// ============================================================
+//  编辑弹窗
+// ============================================================
+let modalMode = 'add'; // 'add' | 'edit'
+let modalEditId = null;
+let modalNewPosX = 50, modalNewPosY = 50;
+
+// 类型按钮选中
+document.querySelectorAll('.type-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('sel'));
+    btn.classList.add('sel');
+  });
+});
+
+function openAddModal(px, py) {
+  modalMode = 'add';
+  modalEditId = null;
+  modalNewPosX = px;
+  modalNewPosY = py;
+  document.getElementById('modal-title').textContent = '新增节点';
+  clearForm();
+  setFormPos(px, py);
+  showModal();
+}
+
+function openEditModal(id) {
+  const entry = ENTRIES.find(e => e.id === id);
+  if (!entry) return;
+  modalMode = 'edit';
+  modalEditId = id;
+  document.getElementById('modal-title').textContent = '编辑节点';
+  fillForm(entry);
+  showModal();
+}
+
+function showModal() {
+  document.getElementById('modal-overlay').classList.add('show');
+  setTimeout(() => document.getElementById('f-name').focus(), 100);
+}
+
+function closeModal(ev) {
+  if (ev && ev.target !== document.getElementById('modal-overlay')) return;
+  document.getElementById('modal-overlay').classList.remove('show');
+}
+
+function clearForm() {
+  document.getElementById('f-name').value    = '';
+  document.getElementById('f-date').value    = '';
+  document.getElementById('f-weather').value = '';
+  document.getElementById('f-location').value= '';
+  document.getElementById('f-desc').value    = '';
+  document.getElementById('f-photos').value  = '';
+  document.getElementById('f-sign').value    = '';
+  document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('sel'));
+  document.querySelector('.type-btn[data-type="travel"]').classList.add('sel');
+}
+
+function fillForm(entry) {
+  document.getElementById('f-name').value    = entry.name    || '';
+  document.getElementById('f-date').value    = entry.date    || '';
+  document.getElementById('f-weather').value = entry.weather || '';
+  document.getElementById('f-location').value= entry.location|| '';
+  document.getElementById('f-desc').value    = entry.desc    || '';
+  document.getElementById('f-photos').value  = (entry.photos || []).join(',');
+  document.getElementById('f-sign').value    = entry.sign    || '';
+  document.querySelectorAll('.type-btn').forEach(b => {
+    b.classList.toggle('sel', b.dataset.type === entry.type);
+  });
+  setFormPos(entry.pos.x, entry.pos.y);
+}
+
+function setFormPos(x, y) {
+  document.getElementById('f-pos-x').value = x.toFixed(1);
+  document.getElementById('f-pos-y').value = y.toFixed(1);
+  document.getElementById('f-pos-preview').textContent =
+    `X: ${x.toFixed(1)}%，Y: ${y.toFixed(1)}%`;
+}
+
+function saveNode() {
+  const name = document.getElementById('f-name').value.trim();
+  if (!name) { alert('节点名称不能为空！'); return; }
+
+  const selType = document.querySelector('.type-btn.sel');
+  const type = selType ? selType.dataset.type : 'life';
+  const photos = document.getElementById('f-photos').value
+    .split(',').map(s => s.trim()).filter(Boolean).slice(0, 3);
+  const posX = parseFloat(document.getElementById('f-pos-x').value) || 50;
+  const posY = parseFloat(document.getElementById('f-pos-y').value) || 50;
+
+  if (modalMode === 'add') {
+    const newEntry = {
+      id: nextId(),
+      name,
+      date:     document.getElementById('f-date').value.trim()     || '',
+      weather:  document.getElementById('f-weather').value.trim()  || '',
+      location: document.getElementById('f-location').value.trim() || name,
+      type,
+      pos: { x: posX, y: posY },
+      desc:   document.getElementById('f-desc').value.trim()  || '',
+      photos: photos.length ? photos : ['📍'],
+      cards:  [],
+      sign:   document.getElementById('f-sign').value.trim()  || '',
+      private: false
+    };
+    ENTRIES.push(newEntry);
+    saveEntries();
+    renderNodes();
+    showToast('节点已添加！');
+  } else {
+    const idx = ENTRIES.findIndex(e => e.id === modalEditId);
+    if (idx === -1) return;
+    ENTRIES[idx] = {
+      ...ENTRIES[idx],
+      name,
+      date:     document.getElementById('f-date').value.trim()     || '',
+      weather:  document.getElementById('f-weather').value.trim()  || '',
+      location: document.getElementById('f-location').value.trim() || name,
+      type,
+      pos: { x: posX, y: posY },
+      desc:   document.getElementById('f-desc').value.trim()  || '',
+      photos: photos.length ? photos : ENTRIES[idx].photos,
+      sign:   document.getElementById('f-sign').value.trim()  || '',
+    };
+    saveEntries();
+    renderNodes();
+    // 如果日记正在显示该节点，刷新内容
+    if (currentIdx >= 0 && ENTRIES[currentIdx] && ENTRIES[currentIdx].id === modalEditId) {
+      renderDiary(ENTRIES[currentIdx]);
+    }
+    showToast('节点已更新！');
+  }
+
+  document.getElementById('modal-overlay').classList.remove('show');
+}
+
+// ============================================================
+//  Toast 提示
+// ============================================================
+function showToast(msg) {
+  let t = document.getElementById('_toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = '_toast';
+    t.style.cssText = `
+      position:fixed;bottom:30px;left:50%;transform:translateX(-50%) translateY(20px);
+      background:rgba(30,20,10,0.88);color:#fff;
+      padding:9px 22px;border-radius:20px;font-size:12px;
+      z-index:99999;opacity:0;transition:opacity .2s,transform .2s;
+      font-family:var(--font);pointer-events:none;white-space:nowrap;
+    `;
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  t.style.transform = 'translateX(-50%) translateY(0)';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => {
+    t.style.opacity = '0';
+    t.style.transform = 'translateX(-50%) translateY(20px)';
+  }, 2200);
+}
+</script>
+</body>
+</html>
